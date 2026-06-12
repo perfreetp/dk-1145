@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Row, Col, Card, Statistic, Table, Tag, Progress } from 'antd';
+import { useMemo, useState } from 'react';
+import { Row, Col, Card, Statistic, Table, Tag, Progress, Modal, Timeline, Descriptions, Image, Button } from 'antd';
 import {
   Store,
   AlertCircle,
@@ -10,6 +10,7 @@ import {
   Calendar,
   MapPin,
   AlertTriangle,
+  ChevronRight,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -26,14 +27,31 @@ import {
   Bar,
 } from 'recharts';
 import { useVendorStore, useInspectionStore, useApplicationStore, useAreaStore } from '../../stores';
+import { StatusBadge } from '../../components/common';
+import { Inspection, Area as AreaType } from '../../types';
 
 const COLORS = ['#10B981', '#F97316', '#EF4444', '#3B82F6'];
 
+const issueTypeLabels: Record<string, { label: string; color: string }> = {
+  road_occupation: { label: '占道经营', color: 'orange' },
+  hygiene: { label: '卫生问题', color: 'red' },
+  noise: { label: '噪音扰民', color: 'purple' },
+  other: { label: '其他', color: 'default' },
+};
+
+const severityLabels: Record<string, { label: string; color: string }> = {
+  minor: { label: '轻微', color: 'green' },
+  moderate: { label: '一般', color: 'orange' },
+  severe: { label: '严重', color: 'red' },
+};
+
 export const Dashboard = () => {
-  const { vendors, getFilteredVendors } = useVendorStore();
-  const { inspections, getStatistics } = useInspectionStore();
+  const { vendors } = useVendorStore();
+  const { inspections } = useInspectionStore();
   const { applications } = useApplicationStore();
   const { areas } = useAreaStore();
+  const [selectedAreaDetail, setSelectedAreaDetail] = useState<AreaType | null>(null);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
 
   const statistics = useMemo(() => {
     const vendorStats = {
@@ -43,7 +61,12 @@ export const Dashboard = () => {
       maintenance: vendors.filter((v) => v.status === 'maintenance').length,
     };
 
-    const inspectionStats = getStatistics();
+    const inspectionStats = {
+      total: inspections.length,
+      pending: inspections.filter((ins) => ins.rectStatus === 'pending').length,
+      completed: inspections.filter((ins) => ins.rectStatus === 'completed').length,
+      overdue: inspections.filter((ins) => ins.rectStatus === 'overdue').length,
+    };
 
     const appStats = {
       total: applications.length,
@@ -53,7 +76,7 @@ export const Dashboard = () => {
     };
 
     return { vendorStats, inspectionStats, appStats };
-  }, [vendors, inspections, applications, getStatistics]);
+  }, [vendors, inspections, applications]);
 
   const trendData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -85,13 +108,23 @@ export const Dashboard = () => {
       const areaInspections = inspections.filter((ins) => areaVendorIds.includes(ins.spotId));
       const unresolvedInspections = areaInspections.filter((ins) => ins.rectStatus !== 'completed');
       
+      const issueTypeBreakdown = {
+        road_occupation: areaInspections.filter(ins => ins.issueType === 'road_occupation').length,
+        hygiene: areaInspections.filter(ins => ins.issueType === 'hygiene').length,
+        noise: areaInspections.filter(ins => ins.issueType === 'noise').length,
+        other: areaInspections.filter(ins => ins.issueType === 'other').length,
+      };
+      
       return {
-        name: area.name,
+        ...area,
         total: areaInspections.length,
         unresolved: unresolvedInspections.length,
         rate: areaInspections.length > 0 
           ? Math.round((unresolvedInspections.length / areaInspections.length) * 100) 
           : 0,
+        issueTypeBreakdown,
+        areaVendors,
+        unresolvedInspections,
       };
     });
 
@@ -143,6 +176,18 @@ export const Dashboard = () => {
     return inspections.filter((ins) => ins.rectStatus === 'overdue');
   }, [inspections]);
 
+  const handleAreaClick = (area: AreaType) => {
+    const areaData = areaViolationData.find(a => a.id === area.id);
+    setSelectedAreaDetail(areaData || area);
+    setDetailModalVisible(true);
+  };
+
+  const getIntensityColor = (intensity: number) => {
+    if (intensity >= 80) return 'bg-red-500';
+    if (intensity >= 50) return 'bg-orange-500';
+    return 'bg-yellow-500';
+  };
+
   const columns = [
     {
       title: '摊位编号',
@@ -176,11 +221,56 @@ export const Dashboard = () => {
     },
   ];
 
-  const getIntensityColor = (intensity: number) => {
-    if (intensity >= 80) return 'bg-red-500';
-    if (intensity >= 50) return 'bg-orange-500';
-    return 'bg-yellow-500';
-  };
+  const areaDetailColumns = [
+    {
+      title: '摊位编号',
+      dataIndex: 'number',
+      key: 'number',
+      render: (number: string) => <span className="font-mono">{number}</span>,
+    },
+    {
+      title: '问题描述',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true,
+    },
+    {
+      title: '问题类型',
+      dataIndex: 'issueType',
+      key: 'issueType',
+      render: (type: string) => (
+        <Tag color={issueTypeLabels[type]?.color}>{issueTypeLabels[type]?.label}</Tag>
+      ),
+    },
+    {
+      title: '严重程度',
+      dataIndex: 'severity',
+      key: 'severity',
+      render: (severity: string) => (
+        <Tag color={severityLabels[severity]?.color}>{severityLabels[severity]?.label}</Tag>
+      ),
+    },
+    {
+      title: '整改状态',
+      dataIndex: 'rectStatus',
+      key: 'rectStatus',
+      render: (status: string) => <StatusBadge status={status as any} />,
+    },
+    {
+      title: '巡查时间',
+      dataIndex: 'createTime',
+      key: 'createTime',
+      render: (time: string) => new Date(time).toLocaleDateString('zh-CN'),
+    },
+  ];
+
+  const selectedAreaInspections = useMemo(() => {
+    if (!selectedAreaDetail) return [];
+    const areaVendorIds = vendors.filter(v => v.areaId === selectedAreaDetail.id).map(v => v.id);
+    return inspections
+      .filter(ins => areaVendorIds.includes(ins.spotId))
+      .sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime());
+  }, [selectedAreaDetail, vendors, inspections]);
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -343,8 +433,9 @@ export const Dashboard = () => {
             <div className="space-y-4">
               {hotZones.map((zone) => (
                 <div
-                  key={zone.name}
-                  className="p-4 rounded-lg border-2 border-gray-200 hover:border-red-300 transition-colors"
+                  key={zone.id}
+                  className="p-4 rounded-lg border-2 border-gray-200 hover:border-red-300 transition-colors cursor-pointer"
+                  onClick={() => handleAreaClick(zone)}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
@@ -355,6 +446,7 @@ export const Dashboard = () => {
                         <div className="flex items-center gap-2">
                           <MapPin size={16} className="text-gray-400" />
                           <span className="font-medium text-gray-900">{zone.name}</span>
+                          <ChevronRight size={16} className="text-gray-400" />
                         </div>
                         <div className="text-sm text-gray-500 mt-1">
                           共 {zone.total} 次巡查，{zone.unresolved} 次未整改
@@ -371,8 +463,13 @@ export const Dashboard = () => {
                     strokeColor={zone.intensity >= 80 ? '#ef4444' : zone.intensity >= 50 ? '#f97316' : '#eab308'}
                     showInfo={false}
                   />
-                  <div className="text-xs text-gray-400 mt-1">
-                    违规强度: {zone.intensity}%
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="text-xs text-gray-400">
+                      违规强度: {zone.intensity}%
+                    </div>
+                    <Button type="link" size="small" className="text-accent p-0 h-auto">
+                      查看详情 →
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -525,6 +622,96 @@ export const Dashboard = () => {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title={
+          <div className="flex items-center gap-2">
+            <MapPin size={20} className="text-accent" />
+            <span>{selectedAreaDetail?.name} - 区域风险详情</span>
+          </div>
+        }
+        open={detailModalVisible}
+        onCancel={() => setDetailModalVisible(false)}
+        footer={null}
+        width={900}
+      >
+        {selectedAreaDetail && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-blue-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-blue-600">
+                  {vendors.filter(v => v.areaId === selectedAreaDetail.id).length}
+                </div>
+                <div className="text-sm text-gray-600">摊位总数</div>
+              </div>
+              <div className="bg-orange-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-orange-600">
+                  {selectedAreaInspections.length}
+                </div>
+                <div className="text-sm text-gray-600">巡查总次数</div>
+              </div>
+              <div className="bg-red-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-red-600">
+                  {selectedAreaInspections.filter(ins => ins.rectStatus !== 'completed').length}
+                </div>
+                <div className="text-sm text-gray-600">未整改次数</div>
+              </div>
+              <div className="bg-green-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-green-600">
+                  {selectedAreaInspections.filter(ins => ins.rectStatus === 'completed').length}
+                </div>
+                <div className="text-sm text-gray-600">已完成整改</div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-3">违规类型分布</h4>
+              <div className="grid grid-cols-4 gap-3">
+                {Object.entries(issueTypeLabels).map(([key, { label, color }]) => {
+                  const count = selectedAreaInspections.filter(ins => ins.issueType === key).length;
+                  return (
+                    <div key={key} className="bg-gray-50 p-3 rounded-lg text-center">
+                      <Tag color={color} className="mb-2">{label}</Tag>
+                      <div className="text-xl font-bold">{count}</div>
+                      <div className="text-xs text-gray-500">次</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-3">未整改记录</h4>
+              <Table
+                columns={areaDetailColumns}
+                dataSource={selectedAreaInspections.filter(ins => ins.rectStatus !== 'completed')}
+                rowKey="id"
+                pagination={{ pageSize: 5 }}
+                size="small"
+              />
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-3">相关摊位</h4>
+              <div className="flex flex-wrap gap-2">
+                {vendors.filter(v => v.areaId === selectedAreaDetail.id).map(vendor => {
+                  const vendorInspections = inspections.filter(ins => ins.spotId === vendor.id && ins.rectStatus !== 'completed');
+                  return (
+                    <Tag 
+                      key={vendor.id}
+                      color={vendorInspections.length > 0 ? 'red' : 'green'}
+                      className="px-3 py-1"
+                    >
+                      {vendor.number} 
+                      {vendorInspections.length > 0 && ` (${vendorInspections.length}次违规)`}
+                    </Tag>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

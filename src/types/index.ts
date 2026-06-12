@@ -27,6 +27,11 @@ export interface Area {
   status: 'active' | 'inactive';
 }
 
+export interface VendorPosition {
+  lat: number;
+  lng: number;
+}
+
 export interface Vendor {
   id: string;
   number: string;
@@ -37,6 +42,8 @@ export interface Vendor {
   responsible: Responsible;
   vendorId?: string;
   expireDate?: string;
+  applicationId?: string;
+  position?: VendorPosition;
 }
 
 export interface Application {
@@ -49,6 +56,7 @@ export interface Application {
   category: string;
   status: ApplicationStatus;
   assignedSpot?: string;
+  assignedSpotId?: string;
   rejectReason?: string;
   createTime: string;
 }

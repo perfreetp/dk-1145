@@ -66,11 +66,39 @@ export const mockAreas: Area[] = [
 const categories = ['餐饮', '服装', '饰品', '玩具', '水果', '蔬菜', '小吃', '手工艺品'];
 const names = ['张三', '李四', '王五', '赵六', '钱七', '孙八', '周九', '吴十', '郑十一', '陈十二'];
 
+const areaPositionRanges: Record<string, { latMin: number; latMax: number; lngMin: number; lngMax: number }> = {
+  'area-001': { latMin: 31.2284, latMax: 31.2304, lngMin: 121.4737, lngMax: 121.4757 },
+  'area-002': { latMin: 31.2330, latMax: 31.2350, lngMin: 121.4800, lngMax: 121.4820 },
+  'area-003': { latMin: 31.2175, latMax: 31.2200, lngMin: 121.4900, lngMax: 121.4925 },
+  'area-004': { latMin: 31.2400, latMax: 31.2420, lngMin: 121.4680, lngMax: 121.4700 },
+  'area-005': { latMin: 31.2255, latMax: 31.2280, lngMin: 121.4850, lngMax: 121.4875 },
+};
+
+const generateFixedPosition = (areaId: string, index: number, total: number): { lat: number; lng: number } => {
+  const range = areaPositionRanges[areaId];
+  if (!range) {
+    return { lat: 31.23 + Math.random() * 0.01, lng: 121.47 + Math.random() * 0.01 };
+  }
+  
+  const cols = Math.ceil(Math.sqrt(total));
+  const row = Math.floor(index / cols);
+  const col = index % cols;
+  
+  const latStep = (range.latMax - range.latMin) / (Math.ceil(Math.sqrt(total)) + 1);
+  const lngStep = (range.lngMax - range.lngMin) / (cols + 1);
+  
+  return {
+    lat: range.latMin + latStep * (row + 1) + (Math.random() - 0.5) * latStep * 0.3,
+    lng: range.lngMin + lngStep * (col + 1) + (Math.random() - 0.5) * lngStep * 0.3,
+  };
+};
+
 export const mockVendors: Vendor[] = Array.from({ length: 50 }, (_, i) => {
   const areaIndex = i % 5;
   const area = mockAreas[areaIndex];
   const status = i % 4 === 0 ? 'vacant' : i % 4 === 1 ? 'occupied' : 'maintenance';
   const hasResponsible = status !== 'vacant';
+  const position = generateFixedPosition(area.id, i, area.totalSpots);
   
   return {
     id: `vendor-${String(i + 1).padStart(3, '0')}`,
@@ -93,12 +121,27 @@ export const mockVendors: Vendor[] = Array.from({ length: 50 }, (_, i) => {
     },
     vendorId: hasResponsible ? `vendor-person-${i}` : undefined,
     expireDate: hasResponsible ? new Date(Date.now() + Math.random() * 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : undefined,
+    applicationId: hasResponsible ? `app-${String(i % 15 + 1).padStart(3, '0')}` : undefined,
+    position,
   };
 });
 
 export const mockApplications: Application[] = Array.from({ length: 20 }, (_, i) => {
   const statuses: ('pending' | 'approved' | 'rejected')[] = ['pending', 'approved', 'rejected'];
   const status = statuses[i % 3];
+  
+  const vacantVendor = mockVendors.find(v => v.status === 'vacant');
+  const approvedVendor = status === 'approved' ? vacantVendor : undefined;
+  
+  if (approvedVendor && !approvedVendor.applicationId) {
+    approvedVendor.applicationId = `app-${String(i + 1).padStart(3, '0')}`;
+    approvedVendor.status = 'occupied';
+    approvedVendor.responsible = {
+      name: names[i % names.length],
+      phone: `139${String(Math.floor(Math.random() * 100000000)).padStart(8, '0')}`,
+      idCard: `${Math.floor(Math.random() * 900000 + 100000)}${String(Math.floor(Math.random() * 900000 + 100000)).padStart(6, '0')}${Math.floor(Math.random() * 900 + 100)}`,
+    };
+  }
   
   return {
     id: `app-${String(i + 1).padStart(3, '0')}`,
@@ -112,7 +155,8 @@ export const mockApplications: Application[] = Array.from({ length: 20 }, (_, i)
     businessDesc: `申请经营${categories[i % categories.length]}类商品，已有3年相关经营经验`,
     category: categories[i % categories.length],
     status,
-    assignedSpot: status === 'approved' ? mockVendors.find(v => v.status === 'vacant')?.id : undefined,
+    assignedSpot: status === 'approved' && approvedVendor ? approvedVendor.number : undefined,
+    assignedSpotId: status === 'approved' && approvedVendor ? approvedVendor.id : undefined,
     rejectReason: status === 'rejected' ? '申请材料不完整，请补充相关证件' : undefined,
     createTime: new Date(Date.now() - (20 - i) * 24 * 60 * 60 * 1000).toISOString(),
   };

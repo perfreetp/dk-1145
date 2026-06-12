@@ -1,47 +1,67 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
-import { Card, Button, Tag, Drawer, Form, Input, InputNumber, Select, message, Space, Alert } from 'antd';
-import { Plus, Edit2, Trash2, MapPin, MousePointer, Undo, Check, X } from 'lucide-react';
-import { useAreaStore, useVendorStore } from '../../stores';
-import { Area } from '../../types';
+import { Card, Button, Tag, Drawer, Form, Input, InputNumber, Select, message, Space, Alert, Descriptions, Timeline, Image } from 'antd';
+import { Plus, Edit2, Trash2, MapPin, MousePointer, Undo, Check, X, User, Phone, AlertTriangle } from 'lucide-react';
+import { useAreaStore, useVendorStore, useInspectionStore } from '../../stores';
+import { Area, Vendor } from '../../types';
+import { StatusBadge } from '../../components/common';
 import L from 'leaflet';
 
 const center: [number, number] = [31.2304, 121.4737];
 
-const vendorIcon = new L.DivIcon({
-  className: 'custom-marker',
-  html: '<div style="width: 30px; height: 30px; background-color: #F97316; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">📍</div>',
-  iconSize: [30, 30],
-  iconAnchor: [15, 15],
-});
+const createVendorIcon = (status: string, number: string) => {
+  const colors: Record<string, string> = {
+    vacant: '#3B82F6',
+    occupied: '#10B981',
+    maintenance: '#F97316',
+  };
+  const color = colors[status] || '#6B7280';
+  
+  return new L.DivIcon({
+    className: 'custom-vendor-marker',
+    html: `<div style="
+      width: 36px;
+      height: 36px;
+      background-color: ${color};
+      border: 3px solid white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 11px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+      cursor: pointer;
+      transition: transform 0.2s;
+    " title="${number}">${number.split('-').pop()}</div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -20],
+  });
+};
 
-const drawingIcon = new L.DivIcon({
-  className: 'drawing-point',
-  html: '<div style="width: 12px; height: 12px; background-color: #F97316; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
-  iconSize: [12, 12],
-  iconAnchor: [6, 6],
-});
+const issueTypeLabels: Record<string, { label: string; color: string }> = {
+  road_occupation: { label: '占道经营', color: 'orange' },
+  hygiene: { label: '卫生问题', color: 'red' },
+  noise: { label: '噪音扰民', color: 'purple' },
+  other: { label: '其他', color: 'default' },
+};
 
 interface DrawingLayerProps {
   isDrawing: boolean;
   points: [number, number][];
   onAddPoint: (point: [number, number]) => void;
-  onUndo: () => void;
-  onFinish: () => void;
-  onCancel: () => void;
-  editingBoundary?: [number, number][];
 }
 
-const DrawingLayer = ({ isDrawing, points, onAddPoint, onUndo, onFinish, onCancel, editingBoundary }: DrawingLayerProps) => {
-  const map = useMapEvents({
+const DrawingLayer = ({ isDrawing, points, onAddPoint }: DrawingLayerProps) => {
+  useMapEvents({
     click: (e) => {
       if (isDrawing) {
         onAddPoint([e.latlng.lat, e.latlng.lng]);
       }
     },
   });
-
-  const displayPoints = isDrawing ? points : (editingBoundary || []);
 
   return (
     <>
@@ -51,13 +71,6 @@ const DrawingLayer = ({ isDrawing, points, onAddPoint, onUndo, onFinish, onCance
             positions={points}
             pathOptions={{ color: '#F97316', weight: 3, dashArray: '5, 10' }}
           />
-          {points.map((point, index) => (
-            <Marker
-              key={`drawing-${index}`}
-              position={point}
-              icon={drawingIcon}
-            />
-          ))}
           {points.length >= 3 && (
             <Polyline
               positions={[points[points.length - 1], points[0]]}
@@ -73,21 +86,28 @@ const DrawingLayer = ({ isDrawing, points, onAddPoint, onUndo, onFinish, onCance
 export const MapPage = () => {
   const { areas, addArea, updateArea, deleteArea, selectedAreaId, setSelectedArea } = useAreaStore();
   const { vendors } = useVendorStore();
+  const { inspections } = useInspectionStore();
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [vendorDetailVisible, setVendorDetailVisible] = useState(false);
   const [editingArea, setEditingArea] = useState<Area | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState<[number, number][]>([]);
   const [form] = Form.useForm();
   const mapRef = useRef<L.Map | null>(null);
 
-  const selectedArea = useMemo(() => {
-    return areas.find((a) => a.id === selectedAreaId);
-  }, [areas, selectedAreaId]);
-
   const selectedAreaVendors = useMemo(() => {
-    if (!selectedAreaId) return [];
+    if (!selectedAreaId) return vendors.filter(v => v.status !== 'vacant');
     return vendors.filter((v) => v.areaId === selectedAreaId);
   }, [vendors, selectedAreaId]);
+
+  const selectedVendorInspections = useMemo(() => {
+    if (!selectedVendor) return [];
+    return inspections
+      .filter(ins => ins.spotId === selectedVendor.id)
+      .sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime())
+      .slice(0, 5);
+  }, [inspections, selectedVendor]);
 
   const handleAddArea = () => {
     setEditingArea(null);
@@ -114,9 +134,9 @@ export const MapPage = () => {
     message.success('区域已删除');
   };
 
-  const handleAddPoint = useCallback((point: [number, number]) => {
+  const handleAddPoint = (point: [number, number]) => {
     setDrawingPoints(prev => [...prev, point]);
-  }, []);
+  };
 
   const handleUndo = () => {
     setDrawingPoints(prev => prev.slice(0, -1));
@@ -162,6 +182,11 @@ export const MapPage = () => {
     setIsDrawing(false);
     setDrawingPoints([]);
     form.resetFields();
+  };
+
+  const handleVendorClick = (vendor: Vendor) => {
+    setSelectedVendor(vendor);
+    setVendorDetailVisible(true);
   };
 
   useEffect(() => {
@@ -229,6 +254,7 @@ export const MapPage = () => {
                     <h3 className="font-bold text-lg mb-2">{area.name}</h3>
                     <div className="space-y-1 text-sm">
                       <p>总摊位数: {area.totalSpots}</p>
+                      <p>已占用: {vendors.filter(v => v.areaId === area.id && v.status === 'occupied').length}</p>
                       <p>状态: <Tag color={area.status === 'active' ? 'green' : 'red'}>{area.status === 'active' ? '启用' : '停用'}</Tag></p>
                     </div>
                   </div>
@@ -236,33 +262,39 @@ export const MapPage = () => {
               </Polygon>
             ))}
             {selectedAreaVendors.map((vendor) => (
-              <Marker
-                key={vendor.id}
-                position={[
-                  31.22 + Math.random() * 0.01,
-                  121.47 + Math.random() * 0.01,
-                ]}
-                icon={vendorIcon}
-              >
-                <Popup>
-                  <div className="min-w-[150px]">
-                    <h3 className="font-bold">摊位 {vendor.number}</h3>
-                    <p className="text-sm mt-1">状态: {vendor.status === 'vacant' ? '空闲' : vendor.status === 'occupied' ? '已占用' : '维护中'}</p>
-                    {vendor.responsible.name && (
-                      <p className="text-sm">负责人: {vendor.responsible.name}</p>
-                    )}
-                  </div>
-                </Popup>
-              </Marker>
+              vendor.position && (
+                <Marker
+                  key={vendor.id}
+                  position={[vendor.position.lat, vendor.position.lng]}
+                  icon={createVendorIcon(vendor.status, vendor.number)}
+                  eventHandlers={{
+                    click: () => handleVendorClick(vendor),
+                  }}
+                >
+                  <Popup>
+                    <div className="min-w-[180px]">
+                      <h3 className="font-bold text-base mb-2">摊位 {vendor.number}</h3>
+                      <div className="space-y-1 text-sm">
+                        <p>状态: <Tag color={vendor.status === 'occupied' ? 'green' : vendor.status === 'maintenance' ? 'orange' : 'blue'}>{vendor.status === 'vacant' ? '空闲' : vendor.status === 'occupied' ? '已占用' : '维护中'}</Tag></p>
+                        {vendor.responsible.name && (
+                          <>
+                            <p>负责人: {vendor.responsible.name}</p>
+                            <p>电话: {vendor.responsible.phone}</p>
+                          </>
+                        )}
+                        {vendor.category.length > 0 && (
+                          <p>品类: {vendor.category.join(', ')}</p>
+                        )}
+                      </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              )
             ))}
             <DrawingLayer
               isDrawing={isDrawing}
               points={drawingPoints}
               onAddPoint={handleAddPoint}
-              onUndo={handleUndo}
-              onFinish={handleFinishDrawing}
-              onCancel={handleCancelDrawing}
-              editingBoundary={editingArea?.boundary}
             />
           </MapContainer>
         </Card>
@@ -285,7 +317,7 @@ export const MapPage = () => {
                     <div className="flex items-center gap-2 mt-1">
                       <MapPin size={14} className="text-gray-400" />
                       <span className="text-sm text-gray-500">
-                        {vendors.filter((v) => v.areaId === area.id).length} / {area.totalSpots} 摊位
+                        {vendors.filter((v) => v.areaId === area.id && v.status === 'occupied').length} / {area.totalSpots} 已占用
                       </span>
                     </div>
                     <div className="mt-2">
@@ -415,6 +447,100 @@ export const MapPage = () => {
             </Form.Item>
           )}
         </Form>
+      </Drawer>
+
+      <Drawer
+        title={<div className="flex items-center gap-2">摊位详情 <span className="font-mono text-accent">{selectedVendor?.number}</span></div>}
+        open={vendorDetailVisible}
+        onClose={() => setVendorDetailVisible(false)}
+        width={600}
+      >
+        {selectedVendor && (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-medium mb-3">基本信息</h3>
+              <Descriptions bordered column={2}>
+                <Descriptions.Item label="摊位编号">
+                  <span className="font-mono font-medium">{selectedVendor.number}</span>
+                </Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <StatusBadge status={selectedVendor.status} />
+                </Descriptions.Item>
+                <Descriptions.Item label="经营品类" span={2}>
+                  {selectedVendor.category.map(cat => (
+                    <Tag key={cat} color="blue" className="mr-1">{cat}</Tag>
+                  ))}
+                </Descriptions.Item>
+                <Descriptions.Item label="经营时段" span={2}>
+                  {selectedVendor.businessHours.start} - {selectedVendor.businessHours.end}
+                </Descriptions.Item>
+                <Descriptions.Item label="到期日期" span={2}>
+                  {selectedVendor.expireDate || '-'}
+                </Descriptions.Item>
+              </Descriptions>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium mb-3">负责人信息</h3>
+              {selectedVendor.responsible.name ? (
+                <Descriptions bordered column={2}>
+                  <Descriptions.Item label="姓名">
+                    <div className="flex items-center gap-2">
+                      <User size={16} className="text-gray-400" />
+                      {selectedVendor.responsible.name}
+                    </div>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="联系电话">
+                    <div className="flex items-center gap-2">
+                      <Phone size={16} className="text-gray-400" />
+                      {selectedVendor.responsible.phone}
+                    </div>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="身份证号" span={2}>
+                    <span className="font-mono">{selectedVendor.responsible.idCard}</span>
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : (
+                <div className="text-gray-400 text-center py-4 bg-gray-50 rounded-lg">暂无负责人信息</div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium mb-3 flex items-center gap-2">
+                <AlertTriangle size={18} className="text-orange-500" />
+                最近巡查问题
+              </h3>
+              {selectedVendorInspections.length > 0 ? (
+                <Timeline
+                  items={selectedVendorInspections.map((ins) => ({
+                    color: ins.rectStatus === 'completed' ? 'green' : ins.rectStatus === 'overdue' ? 'red' : 'blue',
+                    children: (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Tag color={issueTypeLabels[ins.issueType]?.color}>{issueTypeLabels[ins.issueType]?.label}</Tag>
+                          <StatusBadge status={ins.rectStatus} />
+                        </div>
+                        <div className="text-sm text-gray-600">{ins.description}</div>
+                        <div className="text-xs text-gray-400 mt-2">
+                          {new Date(ins.createTime).toLocaleDateString('zh-CN')} | {ins.inspector}
+                        </div>
+                        {ins.photos && ins.photos.length > 0 && (
+                          <div className="flex gap-2 mt-2">
+                            {ins.photos.map((photo, idx) => (
+                              <img key={idx} src={photo} alt={`巡查照片 ${idx + 1}`} className="w-20 h-20 rounded object-cover" />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  }))}
+                />
+              ) : (
+                <div className="text-gray-400 text-center py-8 bg-gray-50 rounded-lg">暂无巡查记录</div>
+              )}
+            </div>
+          </div>
+        )}
       </Drawer>
     </div>
   );

@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
-import { Card, Table, Button, Input, Select, Tag, Space, Modal, Form, message, Popconfirm } from 'antd';
-import { Plus, Search, Edit2, Trash2, Clock, Phone, User } from 'lucide-react';
-import { useVendorStore, useAreaStore } from '../../stores';
-import { Vendor, VendorStatus } from '../../types';
+import { Card, Table, Button, Input, Select, Tag, Space, Modal, Form, message, Popconfirm, Drawer, Descriptions, Image, Timeline } from 'antd';
+import { Plus, Search, Edit2, Trash2, Clock, Phone, User, Eye, FileText, AlertTriangle } from 'lucide-react';
+import { useVendorStore, useAreaStore, useApplicationStore, useInspectionStore } from '../../stores';
+import { Vendor, VendorStatus, Application, Inspection } from '../../types';
 import { StatusBadge } from '../../components/common';
 
 const statusOptions = [
@@ -24,10 +24,26 @@ const categoryOptions = [
   { label: '手工艺品', value: '手工艺品' },
 ];
 
+const issueTypeLabels: Record<string, { label: string; color: string }> = {
+  road_occupation: { label: '占道经营', color: 'orange' },
+  hygiene: { label: '卫生问题', color: 'red' },
+  noise: { label: '噪音扰民', color: 'purple' },
+  other: { label: '其他', color: 'default' },
+};
+
+const severityLabels: Record<string, { label: string; color: string }> = {
+  minor: { label: '轻微', color: 'green' },
+  moderate: { label: '一般', color: 'orange' },
+  severe: { label: '严重', color: 'red' },
+};
+
 export const Vendors = () => {
   const { vendors, addVendor, updateVendor, deleteVendor, filter, setFilter } = useVendorStore();
   const { areas } = useAreaStore();
+  const { applications } = useApplicationStore();
+  const { inspections } = useInspectionStore();
   const [modalVisible, setModalVisible] = useState(false);
+  const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [form] = Form.useForm();
 
@@ -45,6 +61,12 @@ export const Vendors = () => {
       return true;
     });
   }, [vendors, filter]);
+
+  const getVendorDetail = (vendor: Vendor) => {
+    const relatedApplication = applications.find(app => app.id === vendor.applicationId);
+    const vendorInspections = inspections.filter(ins => ins.spotId === vendor.id);
+    return { relatedApplication, vendorInspections };
+  };
 
   const handleAdd = () => {
     setEditingVendor(null);
@@ -64,6 +86,11 @@ export const Vendors = () => {
       expireDate: vendor.expireDate,
     });
     setModalVisible(true);
+  };
+
+  const handleViewDetail = (vendor: Vendor) => {
+    setEditingVendor(vendor);
+    setDetailDrawerVisible(true);
   };
 
   const handleDelete = (id: string) => {
@@ -97,8 +124,10 @@ export const Vendors = () => {
       dataIndex: 'number',
       key: 'number',
       width: 120,
-      render: (text: string) => (
-        <span className="font-mono font-medium text-primary">{text}</span>
+      render: (text: string, record: Vendor) => (
+        <Button type="link" onClick={() => handleViewDetail(record)} className="font-mono font-medium text-primary p-0">
+          {text}
+        </Button>
       ),
     },
     {
@@ -132,37 +161,45 @@ export const Vendors = () => {
       ),
     },
     {
-      title: '经营时段',
-      dataIndex: 'businessHours',
-      key: 'businessHours',
-      width: 120,
-      render: (hours: { start: string; end: string }) => (
-        <span className="text-sm">
-          {hours.start} - {hours.end}
-        </span>
-      ),
-    },
-    {
       title: '负责人',
       dataIndex: 'responsible',
       key: 'responsible',
       width: 180,
-      render: (responsible: { name: string; phone: string }) => (
-        <div className="space-y-1">
-          {responsible.name && (
-            <div className="flex items-center gap-2 text-sm">
-              <User size={14} className="text-gray-400" />
-              <span>{responsible.name}</span>
-            </div>
-          )}
-          {responsible.phone && (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <Phone size={14} />
-              <span>{responsible.phone}</span>
-            </div>
+      render: (responsible: { name: string; phone: string }, record: Vendor) => (
+        <div>
+          {responsible.name ? (
+            <Button type="link" onClick={() => handleViewDetail(record)} className="p-0 h-auto">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-sm">
+                  <User size={14} className="text-gray-400" />
+                  <span>{responsible.name}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Phone size={14} />
+                  <span>{responsible.phone}</span>
+                </div>
+              </div>
+            </Button>
+          ) : (
+            <span className="text-gray-400">未分配</span>
           )}
         </div>
       ),
+    },
+    {
+      title: '申请来源',
+      dataIndex: 'applicationId',
+      key: 'applicationId',
+      width: 120,
+      render: (applicationId: string, record: Vendor) => {
+        if (!applicationId) return <span className="text-gray-400">-</span>;
+        const relatedApp = applications.find(app => app.id === applicationId);
+        return (
+          <Tag color="green" icon={<FileText size={12} />}>
+            {relatedApp?.vendorName || applicationId}
+          </Tag>
+        );
+      },
     },
     {
       title: '到期日期',
@@ -190,6 +227,12 @@ export const Vendors = () => {
           <Button
             type="text"
             size="small"
+            icon={<Eye size={14} />}
+            onClick={() => handleViewDetail(record)}
+          />
+          <Button
+            type="text"
+            size="small"
             icon={<Edit2 size={14} />}
             onClick={() => handleEdit(record)}
           />
@@ -206,6 +249,8 @@ export const Vendors = () => {
       ),
     },
   ];
+
+  const { relatedApplication, vendorInspections } = editingVendor ? getVendorDetail(editingVendor) : { relatedApplication: null, vendorInspections: [] };
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -353,6 +398,135 @@ export const Vendors = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Drawer
+        title={<div className="flex items-center gap-2">摊位详情 <span className="font-mono text-accent">{editingVendor?.number}</span></div>}
+        open={detailDrawerVisible}
+        onClose={() => setDetailDrawerVisible(false)}
+        width={700}
+      >
+        {editingVendor && (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-medium mb-3">基本信息</h3>
+              <Descriptions bordered column={2}>
+                <Descriptions.Item label="摊位编号">
+                  <span className="font-mono font-medium">{editingVendor.number}</span>
+                </Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <StatusBadge status={editingVendor.status} />
+                </Descriptions.Item>
+                <Descriptions.Item label="所属区域">
+                  {areas.find(a => a.id === editingVendor.areaId)?.name || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="经营品类">
+                  {editingVendor.category.map(cat => (
+                    <Tag key={cat} color="blue" className="mr-1">{cat}</Tag>
+                  ))}
+                </Descriptions.Item>
+                <Descriptions.Item label="经营时段">
+                  {editingVendor.businessHours.start} - {editingVendor.businessHours.end}
+                </Descriptions.Item>
+                <Descriptions.Item label="到期日期">
+                  {editingVendor.expireDate || '-'}
+                </Descriptions.Item>
+              </Descriptions>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium mb-3">负责人信息</h3>
+              <Descriptions bordered column={2}>
+                <Descriptions.Item label="姓名">
+                  {editingVendor.responsible.name || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="联系电话">
+                  {editingVendor.responsible.phone || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="身份证号" span={2}>
+                  {editingVendor.responsible.idCard || '-'}
+                </Descriptions.Item>
+              </Descriptions>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium mb-3">申请来源</h3>
+              {relatedApplication ? (
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <div className="flex items-center gap-3 mb-3">
+                    <User size={20} className="text-blue-600" />
+                    <div>
+                      <div className="font-medium">{relatedApplication.vendorName}</div>
+                      <div className="text-sm text-gray-500">{relatedApplication.vendorPhone}</div>
+                    </div>
+                    <StatusBadge status={relatedApplication.status} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-gray-500">申请品类：</span>
+                      <Tag color="blue">{relatedApplication.category}</Tag>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">申请时间：</span>
+                      {new Date(relatedApplication.createTime).toLocaleDateString('zh-CN')}
+                    </div>
+                  </div>
+                  <div className="mt-3 text-sm">
+                    <span className="text-gray-500">经营说明：</span>
+                    <div className="mt-1 text-gray-700">{relatedApplication.businessDesc}</div>
+                  </div>
+                  {relatedApplication.idCardPhoto && relatedApplication.idCardPhoto.length > 0 && (
+                    <div className="mt-3">
+                      <span className="text-gray-500 text-sm">证件照片：</span>
+                      <Image.PreviewGroup>
+                        <div className="flex gap-2 mt-1">
+                          {relatedApplication.idCardPhoto.map((photo, index) => (
+                            <Image key={index} src={photo} width={80} height={80} className="rounded object-cover" style={{ objectFit: 'cover' }} />
+                          ))}
+                        </div>
+                      </Image.PreviewGroup>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-gray-400 text-center py-8">暂无申请来源信息</div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium mb-3">巡查记录</h3>
+              {vendorInspections.length > 0 ? (
+                <Timeline
+                  items={vendorInspections.slice(0, 5).map((ins) => ({
+                    color: ins.rectStatus === 'completed' ? 'green' : ins.rectStatus === 'overdue' ? 'red' : 'blue',
+                    children: (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Tag color={issueTypeLabels[ins.issueType]?.color}>{issueTypeLabels[ins.issueType]?.label}</Tag>
+                          <Tag color={severityLabels[ins.severity]?.color}>{severityLabels[ins.severity]?.label}</Tag>
+                          <StatusBadge status={ins.rectStatus} />
+                        </div>
+                        <div className="text-sm text-gray-600">{ins.description}</div>
+                        <div className="text-xs text-gray-400 mt-1">
+                          巡查时间：{new Date(ins.createTime).toLocaleDateString('zh-CN')} | 巡查员：{ins.inspector}
+                        </div>
+                        {ins.photos && ins.photos.length > 0 && (
+                          <div className="flex gap-1 mt-2">
+                            {ins.photos.map((photo, idx) => (
+                              <img key={idx} src={photo} alt={`巡查照片 ${idx + 1}`} className="w-16 h-16 rounded object-cover" />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  }))}
+                />
+              ) : (
+                <div className="text-gray-400 text-center py-8">暂无巡查记录</div>
+              )}
+            </div>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };

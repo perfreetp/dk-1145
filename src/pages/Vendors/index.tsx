@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Card, Table, Button, Input, Select, Tag, Space, Modal, Form, message, Popconfirm, Drawer, Descriptions, Image, Timeline, Empty } from 'antd';
-import { Plus, Search, Edit2, Trash2, Clock, Phone, User, Eye, FileText, AlertTriangle, CheckCircle, XCircle, RefreshCw, MapPin } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Clock, Phone, User, Eye, FileText, AlertTriangle, CheckCircle, XCircle, RefreshCw, MapPin, ArrowRight } from 'lucide-react';
 import { useVendorStore, useAreaStore, useApplicationStore, useInspectionStore } from '../../stores';
 import { Vendor, VendorStatus, Application, Inspection } from '../../types';
 import { StatusBadge } from '../../components/common';
@@ -66,7 +66,8 @@ export const Vendors = () => {
   const getVendorDetail = (vendor: Vendor) => {
     const relatedApplication = applications.find(app => app.id === vendor.applicationId);
     const vendorInspections = inspections.filter(ins => ins.spotId === vendor.id);
-    return { relatedApplication, vendorInspections };
+    const spotReassignments = relatedApplication ? getSpotReassignments(relatedApplication.id) : [];
+    return { relatedApplication, vendorInspections, spotReassignments };
   };
 
   const handleAdd = () => {
@@ -251,7 +252,7 @@ export const Vendors = () => {
     },
   ];
 
-  const { relatedApplication, vendorInspections } = editingVendor ? getVendorDetail(editingVendor) : { relatedApplication: null, vendorInspections: [] };
+  const { relatedApplication, vendorInspections, spotReassignments } = editingVendor ? getVendorDetail(editingVendor) : { relatedApplication: null, vendorInspections: [], spotReassignments: [] };
 
   const generateTimelineData = () => {
     if (!editingVendor) return [];
@@ -303,6 +304,22 @@ export const Vendors = () => {
         });
       }
     }
+
+    spotReassignments.forEach((reassign) => {
+      timeline.push({
+        id: `reassign-${reassign.id}`,
+        type: 'reassign',
+        title: '调整点位',
+        description: `从 ${reassign.fromSpotNumber} 调整至 ${reassign.toSpotNumber}`,
+        time: new Date(reassign.time),
+        color: 'purple',
+        icon: <ArrowRight size={16} />,
+        details: {
+          fromSpot: reassign.fromSpotNumber,
+          toSpot: reassign.toSpotNumber,
+        },
+      });
+    });
 
     vendorInspections
       .sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime())
@@ -408,6 +425,20 @@ export const Vendors = () => {
 
                 {item.type === 'reject' && item.details.reason && (
                   <div className="text-sm text-red-600">{item.details.reason}</div>
+                )}
+
+                {item.type === 'reassign' && (
+                  <div className="flex items-center gap-3 p-2 bg-purple-50 rounded">
+                    <div className="text-center">
+                      <div className="text-sm font-mono font-medium text-purple-700">{item.details.fromSpot}</div>
+                      <div className="text-xs text-gray-500">原摊位</div>
+                    </div>
+                    <ArrowRight size={20} className="text-purple-500" />
+                    <div className="text-center">
+                      <div className="text-sm font-mono font-medium text-purple-700">{item.details.toSpot}</div>
+                      <div className="text-xs text-gray-500">新摊位</div>
+                    </div>
+                  </div>
                 )}
 
                 {item.type === 'inspection' && (
@@ -815,6 +846,21 @@ export const Vendors = () => {
                 >
                   <CheckCircle size={12} className="mr-1" />
                   整改
+                </Button>
+                <Button
+                  size="small"
+                  type={timelineFilter.includes('reassign') ? 'primary' : 'default'}
+                  onClick={() => {
+                    setTimelineFilter(prev =>
+                      prev.includes('reassign')
+                        ? prev.filter(t => t !== 'reassign')
+                        : [...prev, 'reassign']
+                    );
+                  }}
+                  className={timelineFilter.includes('reassign') ? 'bg-purple-500' : ''}
+                >
+                  <ArrowRight size={12} className="mr-1" />
+                  换点位
                 </Button>
                 {timelineFilter.length > 0 && (
                   <Button size="small" onClick={() => setTimelineFilter([])}>

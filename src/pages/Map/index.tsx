@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
 import { Card, Button, Tag, Drawer, Form, Input, InputNumber, Select, message, Space, Alert, Descriptions, Timeline, Image, Empty } from 'antd';
-import { Plus, Edit2, Trash2, MapPin, MousePointer, Undo, Check, X, User, Phone, AlertTriangle, Clock, CheckCircle, XCircle, FileText } from 'lucide-react';
+import { Plus, Edit2, Trash2, MapPin, MousePointer, Undo, Check, X, User, Phone, AlertTriangle, Clock, CheckCircle, XCircle, FileText, ArrowRight } from 'lucide-react';
 import { useAreaStore, useVendorStore, useInspectionStore, useApplicationStore } from '../../stores';
 import { Area, Vendor } from '../../types';
 import { StatusBadge } from '../../components/common';
@@ -122,6 +122,16 @@ export const MapPage = () => {
     return applications.find(app => app.id === selectedVendor.applicationId);
   }, [applications, selectedVendor]);
 
+  const spotReassignments = useMemo(() => {
+    if (!relatedApplication) return [];
+    return applications
+      .filter(app => app.id === relatedApplication.id)
+      .reduce((acc, app) => {
+        const reassigns = useApplicationStore.getState().getSpotReassignments(app.id);
+        return [...acc, ...reassigns];
+      }, [] as any[]);
+  }, [relatedApplication, applications]);
+
   const generateTimelineData = () => {
     if (!selectedVendor) return [];
 
@@ -172,6 +182,22 @@ export const MapPage = () => {
         });
       }
     }
+
+    spotReassignments.forEach((reassign) => {
+      timeline.push({
+        id: `reassign-${reassign.id}`,
+        type: 'reassign',
+        title: '调整点位',
+        description: `从 ${reassign.fromSpotNumber} 调整至 ${reassign.toSpotNumber}`,
+        time: new Date(reassign.time),
+        color: 'purple',
+        icon: <ArrowRight size={16} />,
+        details: {
+          fromSpot: reassign.fromSpotNumber,
+          toSpot: reassign.toSpotNumber,
+        },
+      });
+    });
 
     selectedVendorInspections
       .sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime())
@@ -277,6 +303,20 @@ export const MapPage = () => {
 
                 {item.type === 'reject' && item.details.reason && (
                   <div className="text-sm text-red-600">{item.details.reason}</div>
+                )}
+
+                {item.type === 'reassign' && (
+                  <div className="flex items-center gap-3 p-2 bg-purple-50 rounded">
+                    <div className="text-center">
+                      <div className="text-sm font-mono font-medium text-purple-700">{item.details.fromSpot}</div>
+                      <div className="text-xs text-gray-500">原摊位</div>
+                    </div>
+                    <ArrowRight size={20} className="text-purple-500" />
+                    <div className="text-center">
+                      <div className="text-sm font-mono font-medium text-purple-700">{item.details.toSpot}</div>
+                      <div className="text-xs text-gray-500">新摊位</div>
+                    </div>
+                  </div>
                 )}
 
                 {item.type === 'inspection' && (
@@ -842,6 +882,21 @@ export const MapPage = () => {
                 >
                   <CheckCircle size={12} className="mr-1" />
                   整改
+                </Button>
+                <Button
+                  size="small"
+                  type={timelineFilter.includes('reassign') ? 'primary' : 'default'}
+                  onClick={() => {
+                    setTimelineFilter(prev =>
+                      prev.includes('reassign')
+                        ? prev.filter(t => t !== 'reassign')
+                        : [...prev, 'reassign']
+                    );
+                  }}
+                  className={timelineFilter.includes('reassign') ? 'bg-purple-500' : ''}
+                >
+                  <ArrowRight size={12} className="mr-1" />
+                  换点位
                 </Button>
                 {timelineFilter.length > 0 && (
                   <Button size="small" onClick={() => setTimelineFilter([])}>

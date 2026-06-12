@@ -176,20 +176,20 @@ export const Dashboard = () => {
   }, [inspections]);
 
   const pendingRectifications = useMemo(() => {
-    let filtered = inspections.filter((ins) => ins.rectStatus === 'pending');
-    
+    let filtered = inspections.filter((ins) => ins.rectStatus === 'pending' || ins.rectStatus === 'overdue');
+
     if (followUpFilter.areaId) {
       const areaVendorIds = vendors.filter(v => v.areaId === followUpFilter.areaId).map(v => v.id);
       filtered = filtered.filter(ins => areaVendorIds.includes(ins.spotId));
     }
-    
+
     if (followUpFilter.responsible) {
       const responsibleVendorIds = vendors
         .filter(v => v.responsible.name.includes(followUpFilter.responsible!))
         .map(v => v.id);
       filtered = filtered.filter(ins => responsibleVendorIds.includes(ins.spotId));
     }
-    
+
     if (followUpFilter.maxDays) {
       const now = new Date();
       filtered = filtered.filter(ins => {
@@ -199,7 +199,7 @@ export const Dashboard = () => {
         return daysLeft <= followUpFilter.maxDays!;
       });
     }
-    
+
     if (followUpFilter.search) {
       const search = followUpFilter.search.toLowerCase();
       filtered = filtered.filter(ins => {
@@ -213,8 +213,10 @@ export const Dashboard = () => {
         );
       });
     }
-    
+
     return filtered.sort((a, b) => {
+      if (a.rectStatus === 'overdue' && b.rectStatus !== 'overdue') return -1;
+      if (a.rectStatus !== 'overdue' && b.rectStatus === 'overdue') return 1;
       if (!a.rectDeadline) return 1;
       if (!b.rectDeadline) return -1;
       return new Date(a.rectDeadline).getTime() - new Date(b.rectDeadline).getTime();
@@ -256,9 +258,11 @@ export const Dashboard = () => {
   const areaDetailColumns = [
     {
       title: '摊位编号',
-      dataIndex: 'number',
       key: 'number',
-      render: (number: string) => <span className="font-mono">{number}</span>,
+      render: (_: any, record: Inspection) => {
+        const vendor = vendors.find(v => v.id === record.spotId);
+        return <span className="font-mono">{vendor?.number || record.spotId}</span>;
+      },
     },
     {
       title: '问题描述',
@@ -649,11 +653,18 @@ export const Dashboard = () => {
             <Space wrap>
               <Input placeholder="搜索摊位/负责人/区域" prefix={<Search size={14} />} value={followUpFilter.search || ''} onChange={(e) => setFollowUpFilter({ ...followUpFilter, search: e.target.value })} className="w-48" allowClear />
               <Select placeholder="所属区域" value={followUpFilter.areaId || ''} onChange={(v) => setFollowUpFilter({ ...followUpFilter, areaId: v || undefined })} options={[{ label: '全部区域', value: '' }, ...areas.map(a => ({ label: a.name, value: a.id }))]} className="w-36" allowClear />
+              <Select placeholder="负责人" value={followUpFilter.responsible || ''} onChange={(v) => setFollowUpFilter({ ...followUpFilter, responsible: v || undefined })} options={[{ label: '全部负责人', value: '' }, ...Array.from(new Set(vendors.filter(v => v.responsible.name).map(v => v.responsible.name))).map(name => ({ label: name, value: name }))]} className="w-36" allowClear />
               <Select placeholder="超期天数" value={followUpFilter.maxDays || undefined} onChange={(v) => setFollowUpFilter({ ...followUpFilter, maxDays: v || undefined })} options={[{ label: '不限', value: undefined as any }, { label: '3天内', value: 3 }, { label: '7天内', value: 7 }, { label: '15天内', value: 15 }]} className="w-28" allowClear />
               <Button onClick={() => setFollowUpFilter({})}>重置</Button>
             </Space>
           </div>
-          <div className="mt-2 text-sm text-gray-500">共 {pendingRectifications.length} 条待整改记录</div>
+          <div className="mt-2 flex items-center justify-between">
+            <div className="text-sm text-gray-500">共 {pendingRectifications.length} 条待整改记录</div>
+            <div className="flex items-center gap-4 text-xs">
+              <Tag color="orange">待整改: {pendingRectifications.filter(p => p.rectStatus === 'pending').length}</Tag>
+              <Tag color="red">已逾期: {pendingRectifications.filter(p => p.rectStatus === 'overdue').length}</Tag>
+            </div>
+          </div>
         </div>
         <Table columns={followUpColumns} dataSource={pendingRectifications} rowKey="id" pagination={{ pageSize: 10 }} size="small" expandable={{ expandedRowRender, expandedRowKeys: expandedRow ? [expandedRow] : [], onExpand: (expanded, record) => { setExpandedRow(expanded ? record.id : null); } }} />
       </Modal>

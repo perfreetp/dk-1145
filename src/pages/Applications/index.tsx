@@ -126,7 +126,7 @@ export const Applications = () => {
     form.validateFields().then((values) => {
       if (selectedApp) {
         const selectedVendor = vendors.find((v) => v.number === values.assignedSpot);
-        
+
         updateVendor(selectedVendor!.id, {
           status: 'occupied',
           responsible: {
@@ -138,7 +138,7 @@ export const Applications = () => {
           applicationId: selectedApp.id,
         });
 
-        approveApplication(selectedApp.id, values.assignedSpot);
+        approveApplication(selectedApp.id, values.assignedSpot, selectedVendor!.id);
         message.success('申请已通过，已自动分配摊位并更新摊位状态');
         setApproveVisible(false);
         form.resetFields();
@@ -183,7 +183,13 @@ export const Applications = () => {
             applicationId: selectedApp.id,
           });
 
-          reassignSpot(selectedApp.id, values.assignedSpot, newVendor.id);
+          reassignSpot(
+            selectedApp.id,
+            values.assignedSpot,
+            newVendor.id,
+            oldVendor.number,
+            oldVendor.id
+          );
           message.success('点位已调整，原摊位已恢复空闲，新摊位已分配');
           setReassignVisible(false);
           reassignForm.resetFields();

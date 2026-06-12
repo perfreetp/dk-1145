@@ -1,10 +1,10 @@
-import { useState, useMemo } from 'react';
-import { Card, Table, Button, Input, Select, Tag, Modal, Form, DatePicker, Upload, message, Popconfirm, Timeline } from 'antd';
+import { useState, useMemo, useCallback } from 'react';
+import { Card, Table, Button, Input, Select, Tag, Modal, Form, DatePicker, Upload, message, Popconfirm, Image } from 'antd';
 import { Plus, Search, Camera, AlertCircle, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { useInspectionStore, useVendorStore } from '../../stores';
 import { Inspection, IssueType, Severity, RectStatus } from '../../types';
 import { StatusBadge } from '../../components/common';
-import { UploadOutlined } from '@ant-design/icons';
+import type { UploadProps, UploadFile } from 'antd';
 
 const issueTypeOptions = [
   { label: '全部类型', value: '' },
@@ -27,6 +27,15 @@ const severityLabels: Record<Severity, { label: string; color: string }> = {
   severe: { label: '严重', color: 'red' },
 };
 
+const convertFileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+  });
+};
+
 export const Inspections = () => {
   const { inspections, addInspection, updateRectStatus } = useInspectionStore();
   const { vendors } = useVendorStore();
@@ -39,6 +48,7 @@ export const Inspections = () => {
     rectStatus?: RectStatus;
   }>({});
   const [form] = Form.useForm();
+  const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
 
   const filteredInspections = useMemo(() => {
     return inspections.filter((ins) => {
@@ -66,6 +76,7 @@ export const Inspections = () => {
 
   const handleAdd = () => {
     form.resetFields();
+    setUploadedPhotos([]);
     setModalVisible(true);
   };
 
@@ -74,25 +85,66 @@ export const Inspections = () => {
     setDetailVisible(true);
   };
 
-  const handleFinish = (values: any) => {
+  const handleFinish = async (values: any) => {
+    const photoUrls = await Promise.all(
+      uploadedPhotos.map(async (photo) => {
+        if (photo.startsWith('data:') || photo.startsWith('http')) {
+          return photo;
+        }
+        return photo;
+      })
+    );
+
     addInspection({
       spotId: values.spotId,
       inspector: values.inspector,
       issueType: values.issueType,
       severity: values.severity,
       description: values.description,
-      photos: values.photos?.fileList?.map((file: any) => file.response?.url || URL.createObjectURL(file.originFileObj)) || [],
+      photos: photoUrls,
       rectDeadline: values.rectDeadline,
       rectStatus: 'pending',
     });
     message.success('巡查记录已添加');
     setModalVisible(false);
     form.resetFields();
+    setUploadedPhotos([]);
   };
 
   const handleUpdateRectStatus = (id: string, status: RectStatus) => {
     updateRectStatus(id, status);
     message.success('整改状态已更新');
+  };
+
+  const uploadProps: UploadProps = {
+    beforeUpload: async (file) => {
+      const isImage = file.type.startsWith('image/');
+      if (!isImage) {
+        message.error('只能上传图片文件');
+        return false;
+      }
+      const isLt5M = file.size / 1024 / 1024 < 5;
+      if (!isLt5M) {
+        message.error('图片大小不能超过5MB');
+        return false;
+      }
+
+      try {
+        const base64 = await convertFileToBase64(file);
+        setUploadedPhotos((prev) => [...prev, base64]);
+        message.success('图片已上传');
+      } catch (error) {
+        message.error('图片处理失败');
+      }
+      return false;
+    },
+    listType: 'picture-card',
+    showUploadList: false,
+    multiple: true,
+  };
+
+  const removePhoto = (index: number) => {
+    setUploadedPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
   const columns = [
@@ -257,13 +309,13 @@ export const Inspections = () => {
           />
           <Select
             value={filter.issueType || ''}
-            onChange={(value) => setFilter({ ...filter, issueType: value || undefined })}
+            onChange={(value) => setFilter({ ...filter, issueType: (value || undefined) as IssueType | undefined })}
             options={issueTypeOptions}
             className="w-32"
           />
           <Select
             value={filter.rectStatus || ''}
-            onChange={(value) => setFilter({ ...filter, rectStatus: value || undefined })}
+            onChange={(value) => setFilter({ ...filter, rectStatus: (value || undefined) as RectStatus | undefined })}
             options={[
               { label: '全部状态', value: '' },
               { label: '待整改', value: 'pending' },
@@ -289,7 +341,10 @@ export const Inspections = () => {
       <Modal
         title="新增巡查记录"
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          setModalVisible(false);
+          setUploadedPhotos([]);
+        }}
         footer={null}
         width={600}
       >
@@ -359,22 +414,49 @@ export const Inspections = () => {
             <DatePicker className="w-full" />
           </Form.Item>
 
-          <Form.Item label="问题照片" name="photos">
-            <Upload
-              listType="picture-card"
-              beforeUpload={() => false}
-              maxCount={3}
-            >
-              <div>
-                <Plus size={20} />
-                <div className="mt-2">上传照片</div>
-              </div>
-            </Upload>
+          <Form.Item label="问题照片">
+            <div className="space-y-3">
+              <Upload {...uploadProps}>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 cursor-pointer hover:border-accent transition-colors">
+                  <div className="flex flex-col items-center">
+                    <Camera size={24} className="text-gray-400 mb-2" />
+                    <span className="text-sm text-gray-600">点击上传照片</span>
+                    <span className="text-xs text-gray-400 mt-1">支持 JPG、PNG 格式，每张不超过 5MB</span>
+                  </div>
+                </div>
+              </Upload>
+              
+              {uploadedPhotos.length > 0 && (
+                <div className="grid grid-cols-3 gap-2">
+                  {uploadedPhotos.map((photo, index) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={photo}
+                        alt={`上传照片 ${index + 1}`}
+                        className="w-full h-24 object-cover rounded-lg"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(index)}
+                        className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </Form.Item>
 
           <Form.Item className="mb-0">
             <div className="flex gap-2 justify-end">
-              <Button onClick={() => setModalVisible(false)}>取消</Button>
+              <Button onClick={() => {
+                setModalVisible(false);
+                setUploadedPhotos([]);
+              }}>
+                取消
+              </Button>
               <Button type="primary" htmlType="submit" className="bg-accent">
                 提交
               </Button>
@@ -441,19 +523,24 @@ export const Inspections = () => {
               <StatusBadge status={selectedInspection.rectStatus} />
             </div>
 
-            {selectedInspection.photos.length > 0 && (
+            {selectedInspection.photos && selectedInspection.photos.length > 0 && (
               <div>
                 <div className="text-sm text-gray-500 mb-2">问题照片</div>
-                <div className="grid grid-cols-3 gap-2">
-                  {selectedInspection.photos.map((photo, index) => (
-                    <img
-                      key={index}
-                      src={photo}
-                      alt={`问题照片 ${index + 1}`}
-                      className="w-full h-24 object-cover rounded-lg"
-                    />
-                  ))}
-                </div>
+                <Image.PreviewGroup>
+                  <div className="grid grid-cols-3 gap-2">
+                    {selectedInspection.photos.map((photo, index) => (
+                      <Image
+                        key={index}
+                        src={photo}
+                        alt={`问题照片 ${index + 1}`}
+                        width="100%"
+                        height={100}
+                        className="rounded-lg object-cover"
+                        style={{ objectFit: 'cover' }}
+                      />
+                    ))}
+                  </div>
+                </Image.PreviewGroup>
               </div>
             )}
           </div>

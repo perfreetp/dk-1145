@@ -235,7 +235,7 @@ export const Vendors = () => {
           />
           <Select
             value={filter.status || ''}
-            onChange={(value) => setFilter({ ...filter, status: value || undefined })}
+            onChange={(value) => setFilter({ ...filter, status: (value || undefined) as VendorStatus | undefined })}
             options={statusOptions}
             className="w-32"
           />

@@ -1,18 +1,32 @@
-import { useState, useMemo } from 'react';
-import { Card, Tabs, Button, Empty, Modal, Form, Input, Select, Tag, message, Image } from 'antd';
-import { Check, X, Eye, User, Phone, IdCard, FileText } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Card, Tabs, Button, Empty, Modal, Form, Input, Select, Tag, message, Image, Upload, Drawer } from 'antd';
+import { Check, X, Eye, User, Phone, IdCard, FileText, Plus, Camera } from 'lucide-react';
 import { useApplicationStore, useVendorStore } from '../../stores';
 import { Application, ApplicationStatus } from '../../types';
 import { StatusBadge } from '../../components/common';
+import type { UploadProps } from 'antd';
+
+const categoryOptions = [
+  { label: '餐饮', value: '餐饮' },
+  { label: '服装', value: '服装' },
+  { label: '饰品', value: '饰品' },
+  { label: '玩具', value: '玩具' },
+  { label: '水果', value: '水果' },
+  { label: '蔬菜', value: '蔬菜' },
+  { label: '小吃', value: '小吃' },
+  { label: '手工艺品', value: '手工艺品' },
+];
 
 export const Applications = () => {
-  const { applications, approveApplication, rejectApplication } = useApplicationStore();
-  const { vendors } = useVendorStore();
+  const { applications, approveApplication, rejectApplication, submitApplication } = useApplicationStore();
+  const { vendors, updateVendor } = useVendorStore();
   const [detailVisible, setDetailVisible] = useState(false);
   const [rejectVisible, setRejectVisible] = useState(false);
   const [approveVisible, setApproveVisible] = useState(false);
+  const [submitVisible, setSubmitVisible] = useState(false);
   const [selectedApp, setSelectedApp] = useState<Application | null>(null);
   const [form] = Form.useForm();
+  const [submitForm] = Form.useForm();
 
   const groupedApplications = useMemo(() => {
     return {
@@ -22,6 +36,10 @@ export const Applications = () => {
     };
   }, [applications]);
 
+  const vacantVendors = useMemo(() => {
+    return vendors.filter((v) => v.status === 'vacant');
+  }, [vendors]);
+
   const handleViewDetail = (app: Application) => {
     setSelectedApp(app);
     setDetailVisible(true);
@@ -29,7 +47,6 @@ export const Applications = () => {
 
   const handleApprove = (app: Application) => {
     setSelectedApp(app);
-    const vacantVendors = vendors.filter((v) => v.status === 'vacant');
     if (vacantVendors.length === 0) {
       message.error('没有可分配的空闲摊位');
       return;
@@ -45,8 +62,20 @@ export const Applications = () => {
   const handleApproveConfirm = () => {
     form.validateFields().then((values) => {
       if (selectedApp) {
+        const selectedVendor = vendors.find((v) => v.number === values.assignedSpot);
+        
+        updateVendor(selectedVendor!.id, {
+          status: 'occupied',
+          responsible: {
+            name: selectedApp.vendorName,
+            phone: selectedApp.vendorPhone,
+            idCard: selectedApp.idCard,
+          },
+          category: [selectedApp.category],
+        });
+
         approveApplication(selectedApp.id, values.assignedSpot);
-        message.success('申请已通过');
+        message.success('申请已通过，已自动分配摊位并更新摊位状态');
         setApproveVisible(false);
         form.resetFields();
       }
@@ -64,7 +93,47 @@ export const Applications = () => {
     });
   };
 
-  const vacantVendors = vendors.filter((v) => v.status === 'vacant');
+  const handleSubmitApplication = () => {
+    submitForm.validateFields().then((values) => {
+      const idCardPhotos = submitForm.getFieldValue('idCardPhoto');
+      const photoUrls = idCardPhotos?.map((file: any) => {
+        if (file.response?.url) return file.response.url;
+        if (file.url) return file.url;
+        return URL.createObjectURL(file.originFileObj);
+      }) || [];
+
+      submitApplication({
+        vendorName: values.vendorName,
+        vendorPhone: values.vendorPhone,
+        idCard: values.idCard,
+        idCardPhoto: photoUrls,
+        businessDesc: values.businessDesc,
+        category: values.category,
+      });
+
+      message.success('申请已提交，请等待审核');
+      setSubmitVisible(false);
+      submitForm.resetFields();
+    });
+  };
+
+  const uploadProps: UploadProps = {
+    beforeUpload: (file) => {
+      const isImage = file.type.startsWith('image/');
+      if (!isImage) {
+        message.error('只能上传图片文件');
+        return false;
+      }
+      const isLt5M = file.size / 1024 / 1024 < 5;
+      if (!isLt5M) {
+        message.error('图片大小不能超过5MB');
+        return false;
+      }
+      return true;
+    },
+    listType: 'picture-card',
+    maxCount: 3,
+  };
 
   const renderApplicationCard = (app: Application, showActions = false) => (
     <Card
@@ -195,6 +264,14 @@ export const Applications = () => {
           <h1 className="text-2xl font-bold text-gray-900 m-0">申请审核</h1>
           <p className="text-gray-500 mt-1">管理摊主入驻申请</p>
         </div>
+        <Button
+          type="primary"
+          icon={<Plus size={16} />}
+          onClick={() => setSubmitVisible(true)}
+          className="bg-accent hover:!bg-accent-600"
+        >
+          提交申请
+        </Button>
       </div>
 
       <Card>
@@ -242,13 +319,24 @@ export const Applications = () => {
 
             <div>
               <div className="text-sm text-gray-500 mb-1">证件照片</div>
-              <Image.PreviewGroup>
-                <div className="flex gap-2">
-                  {selectedApp.idCardPhoto.map((photo, index) => (
-                    <Image key={index} src={photo} width={120} className="rounded" />
-                  ))}
-                </div>
-              </Image.PreviewGroup>
+              {selectedApp.idCardPhoto && selectedApp.idCardPhoto.length > 0 ? (
+                <Image.PreviewGroup>
+                  <div className="flex gap-2 flex-wrap">
+                    {selectedApp.idCardPhoto.map((photo, index) => (
+                      <Image 
+                        key={index} 
+                        src={photo} 
+                        width={100} 
+                        height={100}
+                        className="rounded object-cover" 
+                        style={{ objectFit: 'cover' }}
+                      />
+                    ))}
+                  </div>
+                </Image.PreviewGroup>
+              ) : (
+                <span className="text-gray-400">暂无照片</span>
+              )}
             </div>
 
             <div>
@@ -292,6 +380,19 @@ export const Applications = () => {
         okButtonProps={{ className: 'bg-success' }}
       >
         <Form form={form} layout="vertical">
+          <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <div className="text-sm text-blue-800">
+              <User size={16} className="inline mr-1" />
+              <strong>申请人：</strong>{selectedApp?.vendorName}
+            </div>
+            <div className="text-sm text-blue-800 mt-1">
+              <Phone size={16} className="inline mr-1" />
+              <strong>电话：</strong>{selectedApp?.vendorPhone}
+            </div>
+            <div className="text-sm text-blue-800 mt-1">
+              <Tag color="blue">{selectedApp?.category}</Tag>
+            </div>
+          </div>
           <Form.Item
             label="分配摊位"
             name="assignedSpot"
@@ -326,6 +427,93 @@ export const Applications = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Drawer
+        title="提交入驻申请"
+        open={submitVisible}
+        onClose={() => setSubmitVisible(false)}
+        width={500}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setSubmitVisible(false)}>取消</Button>
+            <Button type="primary" onClick={handleSubmitApplication} className="bg-accent">
+              提交申请
+            </Button>
+          </div>
+        }
+      >
+        <Form form={submitForm} layout="vertical">
+          <Form.Item
+            label="申请人姓名"
+            name="vendorName"
+            rules={[{ required: true, message: '请输入申请人姓名' }]}
+          >
+            <Input placeholder="请输入真实姓名" />
+          </Form.Item>
+
+          <Form.Item
+            label="联系电话"
+            name="vendorPhone"
+            rules={[
+              { required: true, message: '请输入联系电话' },
+              { pattern: /^1[3-9]\d{9}$/, message: '请输入有效的手机号码' },
+            ]}
+          >
+            <Input placeholder="请输入手机号码" />
+          </Form.Item>
+
+          <Form.Item
+            label="身份证号"
+            name="idCard"
+            rules={[
+              { required: true, message: '请输入身份证号' },
+              { pattern: /^\d{17}[\dXx]$/, message: '请输入有效的身份证号' },
+            ]}
+          >
+            <Input placeholder="请输入18位身份证号" maxLength={18} />
+          </Form.Item>
+
+          <Form.Item
+            label="经营品类"
+            name="category"
+            rules={[{ required: true, message: '请选择经营品类' }]}
+          >
+            <Select placeholder="请选择主要经营品类">
+              {categoryOptions.map((opt) => (
+                <Select.Option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            label="经营说明"
+            name="businessDesc"
+            rules={[{ required: true, message: '请输入经营说明' }]}
+          >
+            <Input.TextArea
+              rows={4}
+              placeholder="请简要描述您的经营内容、经验和计划"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="证件照片"
+            name="idCardPhoto"
+            valuePropName="fileList"
+            getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+          >
+            <Upload {...uploadProps} beforeUpload={() => false}>
+              <div>
+                <Camera size={24} className="mx-auto mb-2" />
+                <span className="text-sm">上传证件照片</span>
+                <div className="text-xs text-gray-400 mt-1">最多3张，每张不超过5MB</div>
+              </div>
+            </Upload>
+          </Form.Item>
+        </Form>
+      </Drawer>
     </div>
   );
 };

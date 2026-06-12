@@ -8,6 +8,8 @@ import {
   TrendingUp,
   TrendingDown,
   Calendar,
+  MapPin,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -20,8 +22,10 @@ import {
   PieChart,
   Pie,
   Cell,
+  BarChart,
+  Bar,
 } from 'recharts';
-import { useVendorStore, useInspectionStore, useApplicationStore } from '../../stores';
+import { useVendorStore, useInspectionStore, useApplicationStore, useAreaStore } from '../../stores';
 
 const COLORS = ['#10B981', '#F97316', '#EF4444', '#3B82F6'];
 
@@ -29,6 +33,7 @@ export const Dashboard = () => {
   const { vendors, getFilteredVendors } = useVendorStore();
   const { inspections, getStatistics } = useInspectionStore();
   const { applications } = useApplicationStore();
+  const { areas } = useAreaStore();
 
   const statistics = useMemo(() => {
     const vendorStats = {
@@ -72,6 +77,57 @@ export const Dashboard = () => {
       { name: '维护中', value: statistics.vendorStats.maintenance },
     ];
   }, [statistics]);
+
+  const areaViolationData = useMemo(() => {
+    const areaStats = areas.map((area) => {
+      const areaVendors = vendors.filter((v) => v.areaId === area.id);
+      const areaVendorIds = areaVendors.map((v) => v.id);
+      const areaInspections = inspections.filter((ins) => areaVendorIds.includes(ins.spotId));
+      const unresolvedInspections = areaInspections.filter((ins) => ins.rectStatus !== 'completed');
+      
+      return {
+        name: area.name,
+        total: areaInspections.length,
+        unresolved: unresolvedInspections.length,
+        rate: areaInspections.length > 0 
+          ? Math.round((unresolvedInspections.length / areaInspections.length) * 100) 
+          : 0,
+      };
+    });
+
+    return areaStats.sort((a, b) => b.unresolved - a.unresolved);
+  }, [areas, vendors, inspections]);
+
+  const issueTypeDistribution = useMemo(() => {
+    const typeCount = {
+      road_occupation: 0,
+      hygiene: 0,
+      noise: 0,
+      other: 0,
+    };
+    
+    inspections.forEach((ins) => {
+      typeCount[ins.issueType]++;
+    });
+
+    return [
+      { name: '占道经营', value: typeCount.road_occupation },
+      { name: '卫生问题', value: typeCount.hygiene },
+      { name: '噪音扰民', value: typeCount.noise },
+      { name: '其他问题', value: typeCount.other },
+    ].filter(item => item.value > 0);
+  }, [inspections]);
+
+  const hotZones = useMemo(() => {
+    const top3 = areaViolationData.slice(0, 3);
+    const maxUnresolved = top3[0]?.unresolved || 1;
+    
+    return top3.map((zone, index) => ({
+      ...zone,
+      intensity: Math.round((zone.unresolved / maxUnresolved) * 100),
+      rank: index + 1,
+    }));
+  }, [areaViolationData]);
 
   const expiringVendors = useMemo(() => {
     const now = new Date();
@@ -120,6 +176,12 @@ export const Dashboard = () => {
     },
   ];
 
+  const getIntensityColor = (intensity: number) => {
+    if (intensity >= 80) return 'bg-red-500';
+    if (intensity >= 50) return 'bg-orange-500';
+    return 'bg-yellow-500';
+  };
+
   return (
     <div className="animate-fade-in space-y-6">
       <div className="flex items-center justify-between">
@@ -140,7 +202,7 @@ export const Dashboard = () => {
               title="总摊位数"
               value={statistics.vendorStats.total}
               prefix={<Store className="text-primary" size={24} />}
-              valueStyle={{ color: '#1E3A5F' }}
+              styles={{ content: { color: '#1E3A5F' } }}
             />
             <div className="mt-2 flex items-center gap-2 text-sm">
               <TrendingUp size={16} className="text-success" />
@@ -172,7 +234,7 @@ export const Dashboard = () => {
               title="待处理整改"
               value={statistics.inspectionStats.pending + statistics.inspectionStats.overdue}
               prefix={<AlertCircle className="text-warning" size={24} />}
-              valueStyle={{ color: '#EF4444' }}
+              styles={{ content: { color: '#EF4444' } }}
             />
             <div className="mt-2 flex items-center gap-2 text-sm">
               <TrendingDown size={16} className="text-success" />
@@ -269,6 +331,135 @@ export const Dashboard = () => {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
+          <Card 
+            title={
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={20} className="text-red-500" />
+                <span>违规热区分布</span>
+                <Tag color="red">问题最集中区域</Tag>
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              {hotZones.map((zone) => (
+                <div
+                  key={zone.name}
+                  className="p-4 rounded-lg border-2 border-gray-200 hover:border-red-300 transition-colors"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full ${getIntensityColor(zone.intensity)} text-white flex items-center justify-center font-bold`}>
+                        {zone.rank}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <MapPin size={16} className="text-gray-400" />
+                          <span className="font-medium text-gray-900">{zone.name}</span>
+                        </div>
+                        <div className="text-sm text-gray-500 mt-1">
+                          共 {zone.total} 次巡查，{zone.unresolved} 次未整改
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-red-500">{zone.unresolved}</div>
+                      <div className="text-xs text-gray-400">未整改次数</div>
+                    </div>
+                  </div>
+                  <Progress
+                    percent={zone.intensity}
+                    strokeColor={zone.intensity >= 80 ? '#ef4444' : zone.intensity >= 50 ? '#f97316' : '#eab308'}
+                    showInfo={false}
+                  />
+                  <div className="text-xs text-gray-400 mt-1">
+                    违规强度: {zone.intensity}%
+                  </div>
+                </div>
+              ))}
+              {hotZones.length === 0 && (
+                <div className="text-center text-gray-400 py-8">
+                  暂无违规数据
+                </div>
+              )}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card 
+            title={
+              <div className="flex items-center gap-2">
+                <AlertCircle size={20} className="text-orange-500" />
+                <span>各区域违规统计</span>
+              </div>
+            }
+          >
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={areaViolationData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis type="number" stroke="#6b7280" />
+                <YAxis 
+                  type="category" 
+                  dataKey="name" 
+                  stroke="#6b7280" 
+                  width={80}
+                  tick={{ fontSize: 12 }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'white',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                  }}
+                  formatter={(value: number, name: string) => [
+                    value,
+                    name === 'unresolved' ? '未整改次数' : '总巡查次数'
+                  ]}
+                />
+                <Bar dataKey="total" fill="#1E3A5F" name="总巡查次数" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="unresolved" fill="#EF4444" name="未整改次数" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="flex justify-center gap-6 mt-4">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-[#1E3A5F]"></div>
+                <span className="text-sm text-gray-600">总巡查次数</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-[#EF4444]"></div>
+                <span className="text-sm text-gray-600">未整改次数</span>
+              </div>
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={8}>
+          <Card title="问题类型分布">
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie
+                  data={issueTypeDistribution}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  paddingAngle={2}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {issueTypeDistribution.map((entry, index) => (
+                    <Cell 
+                      key={`cell-${index}`} 
+                      fill={['#f97316', '#ef4444', '#8b5cf6', '#6b7280'][index % 4]} 
+                    />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
           <Card
             title={
               <div className="flex items-center gap-2">
@@ -287,7 +478,7 @@ export const Dashboard = () => {
             />
           </Card>
         </Col>
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={8}>
           <Card
             title={
               <div className="flex items-center gap-2">
@@ -297,24 +488,39 @@ export const Dashboard = () => {
               </div>
             }
           >
-            <div className="space-y-3">
-              {overdueRectifications.slice(0, 5).map((ins) => (
-                <div
-                  key={ins.id}
-                  className="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-200"
-                >
-                  <AlertCircle size={20} className="text-warning mt-0.5" />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">
-                      摊位 {ins.spotId}
-                    </div>
-                    <div className="text-sm text-gray-600 mt-1">{ins.description}</div>
-                    <div className="text-xs text-gray-400 mt-1">
-                      巡查时间: {new Date(ins.createTime).toLocaleDateString('zh-CN')}
+            <div className="space-y-3 max-h-[200px] overflow-y-auto">
+              {overdueRectifications.slice(0, 5).map((ins) => {
+                const vendor = vendors.find((v) => v.id === ins.spotId);
+                const area = areas.find((a) => a.id === vendor?.areaId);
+                return (
+                  <div
+                    key={ins.id}
+                    className="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-200"
+                  >
+                    <AlertCircle size={20} className="text-red-500 mt-0.5" />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900">
+                          {area?.name || '未知区域'}
+                        </span>
+                        <span className="text-gray-400">-</span>
+                        <span className="font-mono text-sm">
+                          {vendor?.number || ins.spotId}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1 line-clamp-1">{ins.description}</div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        巡查时间: {new Date(ins.createTime).toLocaleDateString('zh-CN')}
+                      </div>
                     </div>
                   </div>
+                );
+              })}
+              {overdueRectifications.length === 0 && (
+                <div className="text-center text-gray-400 py-8">
+                  暂无逾期记录
                 </div>
-              ))}
+              )}
             </div>
           </Card>
         </Col>

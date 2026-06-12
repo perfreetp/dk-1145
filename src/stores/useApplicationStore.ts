@@ -9,6 +9,7 @@ interface ApplicationState {
   submitApplication: (application: Omit<Application, 'id' | 'status' | 'createTime'>) => void;
   approveApplication: (id: string, assignedSpot: string) => void;
   rejectApplication: (id: string, reason: string) => void;
+  reassignSpot: (id: string, newSpotNumber: string, newSpotId: string) => void;
 }
 
 export const useApplicationStore = create<ApplicationState>()(
@@ -44,6 +45,14 @@ export const useApplicationStore = create<ApplicationState>()(
           applications: state.applications.map((app) =>
             app.id === id
               ? { ...app, status: 'rejected' as ApplicationStatus, rejectReason: reason }
+              : app
+          ),
+        })),
+      reassignSpot: (id, newSpotNumber, newSpotId) =>
+        set((state) => ({
+          applications: state.applications.map((app) =>
+            app.id === id
+              ? { ...app, assignedSpot: newSpotNumber, assignedSpotId: newSpotId }
               : app
           ),
         })),

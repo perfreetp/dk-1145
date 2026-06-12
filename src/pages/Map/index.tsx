@@ -1,8 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
-import { Card, Button, Tag, Drawer, Form, Input, InputNumber, Select, message, Space, Alert, Descriptions, Timeline, Image } from 'antd';
-import { Plus, Edit2, Trash2, MapPin, MousePointer, Undo, Check, X, User, Phone, AlertTriangle } from 'lucide-react';
-import { useAreaStore, useVendorStore, useInspectionStore } from '../../stores';
+import { Card, Button, Tag, Drawer, Form, Input, InputNumber, Select, message, Space, Alert, Descriptions, Timeline, Image, Empty } from 'antd';
+import { Plus, Edit2, Trash2, MapPin, MousePointer, Undo, Check, X, User, Phone, AlertTriangle, Clock, CheckCircle, XCircle, FileText } from 'lucide-react';
+import { useAreaStore, useVendorStore, useInspectionStore, useApplicationStore } from '../../stores';
 import { Area, Vendor } from '../../types';
 import { StatusBadge } from '../../components/common';
 import L from 'leaflet';
@@ -48,6 +48,12 @@ const issueTypeLabels: Record<string, { label: string; color: string }> = {
   other: { label: '其他', color: 'default' },
 };
 
+const severityLabels: Record<string, { label: string; color: string }> = {
+  minor: { label: '轻微', color: 'green' },
+  moderate: { label: '一般', color: 'orange' },
+  severe: { label: '严重', color: 'red' },
+};
+
 interface DrawingLayerProps {
   isDrawing: boolean;
   points: [number, number][];
@@ -87,6 +93,7 @@ export const MapPage = () => {
   const { areas, addArea, updateArea, deleteArea, selectedAreaId, setSelectedArea } = useAreaStore();
   const { vendors } = useVendorStore();
   const { inspections } = useInspectionStore();
+  const { applications } = useApplicationStore();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [vendorDetailVisible, setVendorDetailVisible] = useState(false);
   const [editingArea, setEditingArea] = useState<Area | null>(null);
@@ -94,6 +101,7 @@ export const MapPage = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState<[number, number][]>([]);
   const [form] = Form.useForm();
+  const [timelineFilter, setTimelineFilter] = useState<string[]>([]);
   const mapRef = useRef<L.Map | null>(null);
 
   const selectedAreaVendors = useMemo(() => {
@@ -108,6 +116,226 @@ export const MapPage = () => {
       .sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime())
       .slice(0, 5);
   }, [inspections, selectedVendor]);
+
+  const relatedApplication = useMemo(() => {
+    if (!selectedVendor?.applicationId) return null;
+    return applications.find(app => app.id === selectedVendor.applicationId);
+  }, [applications, selectedVendor]);
+
+  const generateTimelineData = () => {
+    if (!selectedVendor) return [];
+
+    const timeline: any[] = [];
+
+    if (relatedApplication) {
+      timeline.push({
+        id: `app-submit-${relatedApplication.id}`,
+        type: 'application',
+        title: '提交入驻申请',
+        description: `${relatedApplication.vendorName} 提交了入驻申请`,
+        time: new Date(relatedApplication.createTime),
+        color: 'blue',
+        icon: <FileText size={16} />,
+        details: {
+          category: relatedApplication.category,
+          businessDesc: relatedApplication.businessDesc,
+          photos: relatedApplication.idCardPhoto,
+        },
+      });
+
+      if (relatedApplication.status === 'approved') {
+        timeline.push({
+          id: `app-approve-${relatedApplication.id}`,
+          type: 'approve',
+          title: '审核通过',
+          description: `申请已通过，分配摊位 ${relatedApplication.assignedSpot || ''}`,
+          time: new Date(new Date(relatedApplication.createTime).getTime() + 2 * 24 * 60 * 60 * 1000),
+          color: 'green',
+          icon: <CheckCircle size={16} />,
+          details: {
+            spotNumber: relatedApplication.assignedSpot,
+            spotId: relatedApplication.assignedSpotId,
+          },
+        });
+      } else if (relatedApplication.status === 'rejected') {
+        timeline.push({
+          id: `app-reject-${relatedApplication.id}`,
+          type: 'reject',
+          title: '审核拒绝',
+          description: relatedApplication.rejectReason || '申请未通过审核',
+          time: new Date(new Date(relatedApplication.createTime).getTime() + 2 * 24 * 60 * 60 * 1000),
+          color: 'red',
+          icon: <XCircle size={16} />,
+          details: {
+            reason: relatedApplication.rejectReason,
+          },
+        });
+      }
+    }
+
+    selectedVendorInspections
+      .sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime())
+      .forEach((ins) => {
+        timeline.push({
+          id: `inspection-${ins.id}`,
+          type: 'inspection',
+          title: '巡查记录',
+          description: `${issueTypeLabels[ins.issueType]?.label || ins.issueType} - ${ins.description}`,
+          time: new Date(ins.createTime),
+          color: ins.rectStatus === 'completed' ? 'green' : ins.rectStatus === 'overdue' ? 'red' : 'orange',
+          icon: <AlertTriangle size={16} />,
+          details: {
+            issueType: ins.issueType,
+            severity: ins.severity,
+            rectDeadline: ins.rectDeadline,
+            rectStatus: ins.rectStatus,
+            inspector: ins.inspector,
+            photos: ins.photos,
+          },
+        });
+
+        if (ins.rectStatus === 'completed') {
+          const rectTime = ins.rectDeadline
+            ? new Date(new Date(ins.rectDeadline).getTime() - 1 * 24 * 60 * 60 * 1000)
+            : new Date(new Date(ins.createTime).getTime() + 3 * 24 * 60 * 60 * 1000);
+
+          timeline.push({
+            id: `rect-complete-${ins.id}`,
+            type: 'rectification',
+            title: '整改完成',
+            description: '已完成问题整改',
+            time: rectTime,
+            color: 'green',
+            icon: <CheckCircle size={16} />,
+            details: {
+              originalInspectionId: ins.id,
+            },
+          });
+        }
+      });
+
+    return timeline.sort((a, b) => a.time.getTime() - b.time.getTime());
+  };
+
+  const timelineData = selectedVendor ? generateTimelineData() : [];
+
+  const filteredTimelineData = useMemo(() => {
+    if (timelineFilter.length === 0) return timelineData;
+    return timelineData.filter(item => timelineFilter.includes(item.type));
+  }, [timelineData, timelineFilter]);
+
+  const renderTimelineItem = (item: any) => {
+    return (
+      <div className="p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+        <div className="flex items-start gap-3">
+          <div className="mt-1">{item.icon}</div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-medium text-gray-900">{item.title}</span>
+              <span className="text-xs text-gray-400">
+                {item.time.toLocaleDateString('zh-CN')}
+              </span>
+            </div>
+            <div className="text-sm text-gray-600 mb-2">{item.description}</div>
+
+            {item.details && (
+              <div className="bg-white p-3 rounded border border-gray-200">
+                {item.type === 'application' && (
+                  <>
+                    <div className="text-sm mb-1">
+                      <span className="text-gray-500">申请品类：</span>
+                      <Tag color="blue">{item.details.category}</Tag>
+                    </div>
+                    {item.details.photos && item.details.photos.length > 0 && (
+                      <div className="mt-2">
+                        <span className="text-xs text-gray-500">证件照片：</span>
+                        <Image.PreviewGroup>
+                          <div className="flex gap-1 mt-1">
+                            {item.details.photos.map((photo: string, idx: number) => (
+                              <Image
+                                key={idx}
+                                src={photo}
+                                width={60}
+                                height={60}
+                                className="rounded object-cover"
+                                style={{ objectFit: 'cover' }}
+                              />
+                            ))}
+                          </div>
+                        </Image.PreviewGroup>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {item.type === 'approve' && (
+                  <div className="flex items-center gap-2">
+                    <MapPin size={14} className="text-green-500" />
+                    <span className="text-sm font-mono">{item.details.spotNumber}</span>
+                  </div>
+                )}
+
+                {item.type === 'reject' && item.details.reason && (
+                  <div className="text-sm text-red-600">{item.details.reason}</div>
+                )}
+
+                {item.type === 'inspection' && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <span className="text-gray-500">问题类型：</span>
+                        <Tag color={issueTypeLabels[item.details.issueType]?.color}>
+                          {issueTypeLabels[item.details.issueType]?.label}
+                        </Tag>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">严重程度：</span>
+                        <Tag color={severityLabels[item.details.severity]?.color}>
+                          {severityLabels[item.details.severity]?.label}
+                        </Tag>
+                      </div>
+                    </div>
+                    {item.details.rectDeadline && (
+                      <div className="text-sm mt-1">
+                        <span className="text-gray-500">整改期限：</span>
+                        <span className="font-mono">{item.details.rectDeadline}</span>
+                      </div>
+                    )}
+                    <div className="text-sm mt-1">
+                      <span className="text-gray-500">巡查员：</span>
+                      {item.details.inspector}
+                    </div>
+                    {item.details.photos && item.details.photos.length > 0 && (
+                      <div className="mt-2">
+                        <span className="text-xs text-gray-500">巡查照片：</span>
+                        <div className="flex gap-1 mt-1">
+                          {item.details.photos.map((photo: string, idx: number) => (
+                            <img
+                              key={idx}
+                              src={photo}
+                              alt={`巡查照片 ${idx + 1}`}
+                              className="w-16 h-16 rounded object-cover"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {item.type === 'rectification' && (
+                  <div className="flex items-center gap-2 text-green-600">
+                    <CheckCircle size={14} />
+                    <span className="text-sm">已完成整改</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const handleAddArea = () => {
     setEditingArea(null);
@@ -537,6 +765,101 @@ export const MapPage = () => {
                 />
               ) : (
                 <div className="text-gray-400 text-center py-8 bg-gray-50 rounded-lg">暂无巡查记录</div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium mb-3 flex items-center gap-2">
+                <Clock size={18} className="text-primary" />
+                历史时间线
+                <span className="text-sm text-gray-400 font-normal ml-2">
+                  ({filteredTimelineData.length}条记录)
+                </span>
+              </h3>
+              <div className="mb-3 flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-gray-500">筛选：</span>
+                <Button
+                  size="small"
+                  type={timelineFilter.includes('application') ? 'primary' : 'default'}
+                  onClick={() => {
+                    setTimelineFilter(prev =>
+                      prev.includes('application')
+                        ? prev.filter(t => t !== 'application')
+                        : [...prev, 'application']
+                    );
+                  }}
+                  className={timelineFilter.includes('application') ? 'bg-blue-500' : ''}
+                >
+                  <FileText size={12} className="mr-1" />
+                  申请
+                </Button>
+                <Button
+                  size="small"
+                  type={timelineFilter.includes('approve') || timelineFilter.includes('reject') ? 'primary' : 'default'}
+                  onClick={() => {
+                    setTimelineFilter(prev => {
+                      const hasApprove = prev.includes('approve');
+                      const hasReject = prev.includes('reject');
+                      let newFilter = [...prev];
+                      if (hasApprove) newFilter = newFilter.filter(t => t !== 'approve');
+                      if (hasReject) newFilter = newFilter.filter(t => t !== 'reject');
+                      if (!hasApprove && !hasReject) {
+                        newFilter = [...newFilter, 'approve', 'reject'];
+                      }
+                      return newFilter;
+                    });
+                  }}
+                  className={timelineFilter.includes('approve') || timelineFilter.includes('reject') ? 'bg-green-500' : ''}
+                >
+                  审核
+                </Button>
+                <Button
+                  size="small"
+                  type={timelineFilter.includes('inspection') ? 'primary' : 'default'}
+                  onClick={() => {
+                    setTimelineFilter(prev =>
+                      prev.includes('inspection')
+                        ? prev.filter(t => t !== 'inspection')
+                        : [...prev, 'inspection']
+                    );
+                  }}
+                  className={timelineFilter.includes('inspection') ? 'bg-orange-500' : ''}
+                >
+                  <AlertTriangle size={12} className="mr-1" />
+                  巡查
+                </Button>
+                <Button
+                  size="small"
+                  type={timelineFilter.includes('rectification') ? 'primary' : 'default'}
+                  onClick={() => {
+                    setTimelineFilter(prev =>
+                      prev.includes('rectification')
+                        ? prev.filter(t => t !== 'rectification')
+                        : [...prev, 'rectification']
+                    );
+                  }}
+                  className={timelineFilter.includes('rectification') ? 'bg-green-500' : ''}
+                >
+                  <CheckCircle size={12} className="mr-1" />
+                  整改
+                </Button>
+                {timelineFilter.length > 0 && (
+                  <Button size="small" onClick={() => setTimelineFilter([])}>
+                    清除筛选
+                  </Button>
+                )}
+              </div>
+              {filteredTimelineData.length > 0 ? (
+                <div className="space-y-3">
+                  {filteredTimelineData.map((item, index) => (
+                    <div key={item.id} className="relative pl-6 pb-4 border-l-2 border-gray-200 last:border-l-transparent">
+                      <div className="absolute left-[-9px] top-0 w-4 h-4 rounded-full border-2 border-white" style={{ backgroundColor: ['#1890ff', '#52c41a', '#faad14', '#ff4d4f'][index % 4] }} />
+                      {renderTimelineItem(item)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty description="暂无符合条件的记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
               )}
             </div>
           </div>
